@@ -46,7 +46,7 @@ def process_csv(input_file, output_file):
 
                 # Loại bỏ trùng theo primary key
                 container_df = container_df.drop_duplicates(
-                    subset=["UN Type", "HTS CODE", "Desc.of Goods"]
+                    subset=["UN Type", "Desc.of Goods"]
                 )
 
                 # Phân loại theo UN Type
@@ -59,7 +59,8 @@ def process_csv(input_file, output_file):
                     f.write("cont: {}\n".format(container_no))
                     for desc in dg_df["Desc.of Goods"].dropna().tolist():
                         f.write("{}\n".format(desc))
-                    f.write("hs code: {}\n".format(", ".join(dg_df["HTS CODE"].dropna().astype(str).tolist())))
+                    hs_codes = dg_df["HTS CODE"].dropna().astype(str).unique().tolist()
+                    f.write("hs code: {}\n".format(", ".join(hs_codes)))
                     f.write("DG GOODS\n")
                     f.write("UN No: UN3481\n")
                     f.write("Technical name: LITHIUM ION BATTERIES ARE PACKED WITH EQUIPMENT\n")
@@ -72,7 +73,8 @@ def process_csv(input_file, output_file):
                     f.write("cont: {}\n".format(container_no))
                     for desc in nondg_df["Desc.of Goods"].dropna().tolist():
                         f.write("{}\n".format(desc))
-                    f.write("hs code: {}\n".format(", ".join(nondg_df["HTS CODE"].dropna().astype(str).tolist())))
+                    hs_codes = nondg_df["HTS CODE"].dropna().astype(str).unique().tolist()
+                    f.write("hs code: {}\n".format(", ".join(hs_codes)))
                     f.write("NONDG GOODS CONTAIN BATTERY\n")
                     f.write("---------------------------------\n")
 
@@ -81,7 +83,8 @@ def process_csv(input_file, output_file):
                     f.write("cont: {}\n".format(container_no))
                     for desc in general_df["Desc.of Goods"].dropna().tolist():
                         f.write("{}\n".format(desc))
-                    f.write("hs code: {}\n".format(", ".join(general_df["HTS CODE"].dropna().astype(str).tolist())))
+                    hs_codes = general_df["HTS CODE"].dropna().astype(str).unique().tolist()
+                    f.write("hs code: {}\n".format(", ".join(hs_codes)))
                     f.write("GENERAL GOODS WITHOUT BATTERY\n")
                     f.write("---------------------------------\n")
 
