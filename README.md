@@ -2,18 +2,7 @@
 
 File `shipping_classifier.py` sẽ nằm trong thư mục đó.
 
-## 2. Chuẩn bị dữ liệu đầu vào
-Tạo file `input.csv` chứa dữ liệu cần xử lý.
-
-Đặt `input.csv` cùng cấp với `shipping_classifier.py`.
-
-Ví dụ cấu trúc thư mục:
-```json
-shipping-classifier/
-├── shipping_classifier.py
-├── input.csv
-```
-## 3. Kiểm tra phiên bản Python và cài đặt pandas
+## 2. Kiểm tra phiên bản Python và cài đặt pandas
 Để cài đặt thư viện pandas, trước hết bạn cần biết máy tính của bạn sử dụng lệnh nào để chạy Python. Hãy thử từng lệnh dưới đây:
 
 ### a. Kiểm tra lệnh chạy Python
@@ -32,28 +21,24 @@ Sau khi tìm được lệnh đúng (ví dụ: python3), hãy dùng lệnh đó 
 
 Thay thế 'python3' bằng lệnh bạn tìm được ở trên
 ```json
-python3 -m pip install pandas
+python3 -m pip install pandas openpyxl xlrd
 ```
 Lưu ý: Nếu bạn dùng Python 2, hãy thay đổi lệnh trên thành python -m pip install pandas.
 
 ## 4. Chạy chương trình
-Trong thư mục chứa `shipping_classifier.py` và `input.csv`, chạy lệnh:
+Trong thư mục chứa `shipping_classifier.py` chạy lệnh:
 
  Thay thế 'python3' bằng lệnh bạn tìm được
 ```json
 python3 shipping_classifier.py
 ```
+kéo thả file input vào 
+nếu là file excel ( xls , xlsx ) , chọn sheet cần xử lý
+
 ## 5. Kiểm tra kết quả
-Sau khi chạy xong, kết quả sẽ được lưu trong output.txt:
+Sau khi chạy xong, kết quả sẽ được lưu trong _output.txt
 
-
-```json
-shipping-classifier/
-├── shipping_classifier.py
-├── input.csv
-└── output.txt
-```
-Mở file output.txt để xem kết quả.
+Mở file _output.txt để xem kết quả.
 
 ## Note : Lưu ý kiểm tra kỹ kết quả để tránh có sai sót phát sinh
 
