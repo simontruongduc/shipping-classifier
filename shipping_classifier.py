@@ -2,98 +2,181 @@
 import pandas as pd
 import os
 import sys
+import re
 
-# Danh sách header chuẩn
-EXPECTED_HEADERS = [
-    "SO#", "Container type", "Container NO", "Seal NO", "QTY", "CTN", "No of Package",
-    "Total No of Package", "N.W.", "GW", "CBM", "UN Type", "HTS CODE", "END BYR PO",
-    "TTI MODEL", "CUST MODEL", "OFIS LN NBR", "OFIS SHIPMENT NBR", "OFIS LINE ID",
-    "CSR Number", "Desc.of Goods"
-]
+REQUIRED_HEADERS = ["Container NO", "UN Type", "HTS CODE", "Desc.of Goods"]
+
+FACTORY_RULES = {
+    "OP": {
+        "DG": {
+            "values": ["DG"],
+            "footer": [
+                "DG GOODS",
+                "UN No: UN3481",
+                "Technical name: LITHIUM ION BATTERIES ARE PACKED WITH EQUIPMENT",
+                "IMO/CRF class: 9",
+                "UN PACKING CODE: 4G",
+            ],
+        },
+        "NONDG": {
+            "values": ["NONDG"],
+            "footer": ["NONDG GOODS CONTAIN BATTERY"],
+        },
+        "GENERAL": {
+            "values": ["GENERAL"],
+            "footer": ["GENERAL GOODS WITHOUT BATTERY"],
+        },
+    },
+    "CPT": {
+        "DG": None,  # CPT không có DG
+        "NONDG": {
+            "values": ["NON-DG"],
+            "footer": ["Non-DG GOODS"],
+        },
+        "GENERAL": {
+            "values": ["GENERAL CARGO"],
+            "footer": ["General Cargo"],
+        },
+    },
+    "MILWAUKEE": {
+        "DG": {
+            "values": [
+                "UN3481 LITHIUM BATTERY PACKED WITH EQUIPMENT CLASS 9 PG N/A – PI 966"
+            ],
+            "footer": [
+                "UN3481 LITHIUM BATTERY PACKED WITH EQUIPMENT CLASS 9 PG N/A – PI 966"
+            ],
+        },
+        "NONDG": {
+            "values": ["NON-DG WITH BATTERY"],
+            "footer": ["NON-DG WITH BATTERY"],
+        },
+        "NONDG-WITHOUT": {
+            "values": ["NON-DG WITHOUT BATTERY"],
+            "footer": ["NON-DG WITHOUT BATTERY"],
+        },
+        "GENERAL": {
+            "values": ["GENERAL CARGO WITHOUT BATTERY"],
+            "footer": ["GENERAL CARGO WITHOUT BATTERY"],
+        },
+    },
+}
+
+
+def normalize_name(s: str) -> str:
+    """Chuẩn hóa tên cột / chuỗi: lower, remove BOM, keep alnum, collapse spaces"""
+    if pd.isna(s):
+        return ""
+    s = str(s).replace("\ufeff", "").strip().lower()
+    # thay tất cả ký tự non-alnum thành space
+    s = re.sub(r"[^0-9a-z]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def find_header_row(file_path, ext, sheet_name=None, preview_rows=30):
+    """
+    Tìm dòng header bằng cách scan preview_rows đầu tiên.
+    Trả về index của header (0-based). Nếu không tìm thấy, trả về 0.
+    """
+    if ext == ".csv":
+        preview_df = pd.read_csv(file_path, encoding="utf-8-sig", header=None, nrows=preview_rows)
+    else:
+        preview_df = pd.read_excel(file_path, sheet_name=sheet_name, engine="openpyxl", header=None, nrows=preview_rows)
+
+    target_norms = {normalize_name(h): h for h in REQUIRED_HEADERS}
+
+    for i in range(len(preview_df)):
+        row = preview_df.iloc[i].astype(str).tolist()
+        row_norms = [normalize_name(v) for v in row]
+        # kiểm tra tất cả required header có trong dòng này không
+        if all(t in row_norms for t in target_norms):
+            return i
+    return 0
+
 
 def choose_input_file():
-    """Hỏi người dùng nhập đường dẫn file"""
     while True:
         file_path = input("📂 Nhập đường dẫn file CSV hoặc Excel: ").strip('"').strip()
         if os.path.exists(file_path):
             return file_path
-        else:
-            print("❌ Lỗi: File không tồn tại. Vui lòng nhập lại!")
+        print("❌ Lỗi: File không tồn tại. Vui lòng nhập lại!")
+
 
 def choose_excel_sheet(file_path):
-    """Hỏi người dùng chọn sheet khi mở Excel"""
     xls = pd.ExcelFile(file_path, engine="openpyxl")
     sheets = xls.sheet_names
-
     print("\n📌 Danh sách các sheet trong file:")
     for i, sheet in enumerate(sheets, start=1):
         print(f"   {i}. {sheet}")
+    choice = input("\n🔹 Nhập số thứ tự sheet (Enter = sheet đầu tiên): ").strip()
+    return sheets[int(choice) - 1] if choice.isdigit() and 1 <= int(choice) <= len(sheets) else sheets[0]
 
-    choice = input("\n🔹 Nhập số thứ tự sheet muốn đọc (Enter để chọn sheet đầu tiên): ").strip()
 
-    if choice == "":
-        return sheets[0]
+def choose_factory_type():
+    factories = list(FACTORY_RULES.keys())
+    print("\n🏭 Chọn loại nhà máy cần xử lý:")
+    for i, fac in enumerate(factories, start=1):
+        print(f"   {i}. {fac}")
+    choice = input("\n🔹 Nhập số thứ tự (1-{}): ".format(len(factories))).strip()
+    return factories[int(choice) - 1] if choice.isdigit() and 1 <= int(choice) <= len(factories) else factories[0]
 
-    if choice.isdigit() and 1 <= int(choice) <= len(sheets):
-        return sheets[int(choice) - 1]
 
-    print("⚠️ Lựa chọn không hợp lệ. Mặc định đọc sheet đầu tiên.")
-    return sheets[0]
+def write_section(f, container_no, df, footer):
+    if df.empty:
+        return
+    f.write(f"cont: {container_no}\n")
+    for desc in df["Desc.of Goods"].dropna().tolist():
+        f.write(f"{desc}\n")
+    hs_codes = (
+        df["HTS CODE"]
+        .dropna()
+        .apply(lambda x: str(int(x)) if isinstance(x, (int, float)) and x == int(x) else str(x))
+        .unique()
+        .tolist()
+    )
 
-def find_header_row(file_path, ext, sheet_name=None):
-    """
-    Xác định dòng header trong file Excel hoặc CSV
-    Trả về index của header
-    """
-    if ext == ".csv":
-        preview_df = pd.read_csv(file_path, encoding="utf-8-sig", header=None, nrows=30)
-    else:
-        preview_df = pd.read_excel(file_path, sheet_name=sheet_name, engine="openpyxl", header=None, nrows=30)
+    if hs_codes:
+        f.write(f"hs code: {', '.join(hs_codes)}\n")
+    for line in footer:
+        f.write(f"{line}\n")
+    f.write("---------------------------------\n")
 
-    for i in range(len(preview_df)):
-        row_values = preview_df.iloc[i].astype(str).str.strip().tolist()
-        # Nếu số cột trùng khớp và các header chính xuất hiện trong dòng này
-        matches = [h for h in EXPECTED_HEADERS if h in row_values]
-        if len(matches) >= 5:  # Chỉ cần tìm thấy ≥5 header trùng là đủ tin tưởng
-            return i
 
-    print("⚠️ Không tìm thấy header phù hợp. Sử dụng dòng đầu tiên làm header.")
-    return 0
-
-def process_file(input_file, output_file):
+def process_file(input_file, output_file, factory_type):
     try:
         ext = os.path.splitext(input_file)[1].lower()
-
-        # Chọn sheet nếu là Excel
         sheet_name = None
         if ext in [".xls", ".xlsx"]:
             sheet_name = choose_excel_sheet(input_file)
 
-        # Tìm dòng header chính xác
         header_row = find_header_row(input_file, ext, sheet_name)
 
-        # Đọc file, bỏ qua các dòng trước header
+        # đọc file với skiprows = header_row để header trở thành hàng đầu tiên
         if ext == ".csv":
-            df = pd.read_csv(input_file, encoding="utf-8-sig", skiprows=header_row)
+            df = pd.read_csv(input_file, encoding="utf-8-sig", skiprows=header_row, header=0)
         else:
-            df = pd.read_excel(input_file, sheet_name=sheet_name, engine="openpyxl", skiprows=header_row)
+            df = pd.read_excel(input_file, sheet_name=sheet_name, engine="openpyxl", skiprows=header_row, header=0)
 
-        # Đặt tên cột theo EXPECTED_HEADERS
-        df.columns = EXPECTED_HEADERS
-
-        print(f"\n✅ Đã tìm thấy header tại dòng: {header_row + 1}")
-
-        # Loại bỏ dòng trống
-        df = df.dropna(how="all")
+        # Chuẩn hóa và map tên cột
+        col_map = {}
+        target_norms = {normalize_name(h): h for h in REQUIRED_HEADERS}
+        for col in df.columns:
+            n = normalize_name(col)
+            if n in target_norms:
+                col_map[col] = target_norms[n]
+        if col_map:
+            df = df.rename(columns=col_map)
 
         # Kiểm tra cột bắt buộc
-        required_cols = ["Container NO", "UN Type", "HTS CODE", "Desc.of Goods"]
-        for col in required_cols:
+        for col in REQUIRED_HEADERS:
             if col not in df.columns:
                 print(f"❌ Lỗi: Không tìm thấy cột '{col}' trong file.")
                 sys.exit(1)
 
-        # Điền giá trị Container NO bị trống
+        df = df.dropna(how="all")
+
+        # Điền Container NO bị trống (carry-forward)
         container_value = None
         for i in df.index:
             current_val = str(df.at[i, "Container NO"]).strip()
@@ -102,59 +185,27 @@ def process_file(input_file, output_file):
             elif container_value:
                 df.at[i, "Container NO"] = container_value
 
-        # Group dữ liệu theo Container NO
+        # Nhóm theo container
         grouped = {}
         for _, row in df.iterrows():
             container_no = str(row["Container NO"]).strip()
             grouped.setdefault(container_no, []).append(row)
 
-        # Xóa file output cũ nếu tồn tại
         if os.path.exists(output_file):
             os.remove(output_file)
 
-        # Mở file để ghi dữ liệu
         with open(output_file, "w", encoding="utf-8") as f:
             for container_no, rows in grouped.items():
-                container_df = pd.DataFrame(rows)
-                container_df = container_df.drop_duplicates(subset=["UN Type", "Desc.of Goods"])
+                container_df = pd.DataFrame(rows).drop_duplicates(subset=["UN Type", "Desc.of Goods"])
+                rules = FACTORY_RULES[factory_type]
 
-                dg_df = container_df[container_df["UN Type"].str.upper() == "DG"]
-                nondg_df = container_df[container_df["UN Type"].str.upper() == "NONDG"]
-                general_df = container_df[container_df["UN Type"].str.upper() == "GENERAL"]
-
-                # --- Xử lý DG ---
-                if not dg_df.empty:
-                    f.write("cont: {}\n".format(container_no))
-                    for desc in dg_df["Desc.of Goods"].dropna().tolist():
-                        f.write("{}\n".format(desc))
-                    hs_codes = dg_df["HTS CODE"].dropna().astype(str).unique().tolist()
-                    f.write("hs code: {}\n".format(", ".join(hs_codes)))
-                    f.write("DG GOODS\n")
-                    f.write("UN No: UN3481\n")
-                    f.write("Technical name: LITHIUM ION BATTERIES ARE PACKED WITH EQUIPMENT\n")
-                    f.write("IMO/CRF class: 9\n")
-                    f.write("UN PACKING CODE: 4G\n")
-                    f.write("---------------------------------\n")
-
-                # --- Xử lý NONDG ---
-                if not nondg_df.empty:
-                    f.write("cont: {}\n".format(container_no))
-                    for desc in nondg_df["Desc.of Goods"].dropna().tolist():
-                        f.write("{}\n".format(desc))
-                    hs_codes = nondg_df["HTS CODE"].dropna().astype(str).unique().tolist()
-                    f.write("hs code: {}\n".format(", ".join(hs_codes)))
-                    f.write("NONDG GOODS CONTAIN BATTERY\n")
-                    f.write("---------------------------------\n")
-
-                # --- Xử lý GENERAL ---
-                if not general_df.empty:
-                    f.write("cont: {}\n".format(container_no))
-                    for desc in general_df["Desc.of Goods"].dropna().tolist():
-                        f.write("{}\n".format(desc))
-                    hs_codes = general_df["HTS CODE"].dropna().astype(str).unique().tolist()
-                    f.write("hs code: {}\n".format(", ".join(hs_codes)))
-                    f.write("GENERAL GOODS WITHOUT BATTERY\n")
-                    f.write("---------------------------------\n")
+                for section, rule in rules.items():
+                    if not rule:
+                        continue
+                    allowed = [v.upper() for v in rule["values"]]
+                    mask = container_df["UN Type"].astype(str).str.upper().isin(allowed)
+                    section_df = container_df[mask]
+                    write_section(f, container_no, section_df, rule["footer"])
 
         print(f"\n✅ Đã xử lý xong! File xuất: {output_file}")
 
@@ -167,5 +218,6 @@ if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.abspath(input_file))
     file_name = os.path.splitext(os.path.basename(input_file))[0]
     output_file = os.path.join(base_dir, f"{file_name}_output.txt")
-    process_file(input_file, output_file)
 
+    factory_type = choose_factory_type()
+    process_file(input_file, output_file, factory_type)
