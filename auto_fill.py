@@ -84,109 +84,148 @@ def init_master_data():
     except Exception as e:
         print(f"❌ Lỗi trong quá trình init master data: {e}")
 
+import os
+import sqlite3
+import pandas as pd
+from openpyxl import load_workbook
+from datetime import datetime
+
+
+def normalize_date(value):
+    """Chuẩn hóa giá trị ngày về dạng dd/mm/yy nếu có thể."""
+    if value in (None, "", "NaT"):
+        return ""
+    
+    # Nếu là kiểu datetime hoặc pandas Timestamp
+    if isinstance(value, (datetime, pd.Timestamp)):
+        return value.strftime("%d/%m/%y")
+    
+    value = str(value).strip()
+    if not value:
+        return ""
+
+    # Loại bỏ phần giờ nếu có
+    if " " in value:
+        value = value.split(" ")[0]
+
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d"):
+        try:
+            dt = datetime.strptime(value, fmt)
+            return dt.strftime("%d/%m/%y")
+        except ValueError:
+            continue
+    return value
+
+
 
 def fill_data():
+    DB_NAME = "master_data.db"
+    TABLE_NAME = "master_data"
+
     try:
+        # Kiểm tra master data
         if not os.path.exists(DB_NAME):
             print("⚠️ Chưa có master data. Hãy khởi tạo trước (chọn option 1).")
             return
 
         file_path = input("Nhập hoặc kéo thả file data cần xử lý: ").strip().strip('"').strip("'")
-
         if not os.path.exists(file_path):
             print("❌ File không tồn tại.")
             return
 
-        import openpyxl
+        # Đọc tất cả sheet
+        excel = pd.ExcelFile(file_path)
+        print("\n📘 Danh sách sheet có trong file:")
+        for i, sheet in enumerate(excel.sheet_names, start=1):
+            print(f"{i}. {sheet}")
 
-        # Đọc file input
-        wb = openpyxl.load_workbook(file_path)
-        sheets = wb.sheetnames
-
-        print("\n📄 Danh sách sheet:")
-        for i, s in enumerate(sheets, start=1):
-            print(f"{i}. {s}")
-
-        choice = input("Chọn sheet cần xử lý: ").strip()
-        if not choice.isdigit() or int(choice) < 1 or int(choice) > len(sheets):
+        choice = input("\nNhập số sheet bạn muốn xử lý: ").strip()
+        if not choice.isdigit() or int(choice) < 1 or int(choice) > len(excel.sheet_names):
             print("❌ Lựa chọn không hợp lệ.")
             return
 
-        sheet_name = sheets[int(choice) - 1]
-        ws = wb[sheet_name]
+        sheet_name = excel.sheet_names[int(choice) - 1]
+        print(f"👉 Đang xử lý sheet: {sheet_name}")
 
-        # Mở kết nối SQLite
+        # Đọc sheet được chọn
+        input_df = pd.read_excel(file_path, sheet_name=sheet_name, dtype=str).fillna('')
+        if 'BK #' not in input_df.columns:
+            print("❌ File không có cột 'BK #'.")
+            return
+
+        # Kết nối DB
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
 
-        print(f"🚀 Đang xử lý sheet: {sheet_name} ...")
+        # Load workbook (để ghi đè mà giữ nguyên format)
+        wb = load_workbook(file_path)
+        ws = wb[sheet_name]
 
-        # Lấy header để xác định vị trí cột
-        headers = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
+        # Lấy index của cột cần fill
+        col_map = {
+            "LINE": "Carrier",
+            "JOB": "Job no.",
+            "VESSEL": "Vessel name",
+            "BRANCH": "Shipper Name",
+            "ETD": None  # xử lý riêng
+        }
 
-        # Kiểm tra cột BK# có tồn tại không
-        if "BK #" not in headers:
-            print("❌ Không tìm thấy cột 'BK #' trong sheet.")
-            return
+        header_row = 1
+        col_index = {cell.value.strip(): cell.column for cell in ws[header_row] if cell.value}
 
-        bk_col = headers["BK #"]
-        line_col = headers.get("LINE")
-        job_col = headers.get("JOB")
-        vessel_col = headers.get("VESSEL")
-        branch_col = headers.get("BRANCH")
-        etd_col = headers.get("ETD")
-
-        total_rows = ws.max_row
-        for row_idx in range(2, total_rows + 1):
-            bk_value = ws.cell(row=row_idx, column=bk_col).value
-
-            if not bk_value or str(bk_value).strip() == "":
-                # BK # trống => bỏ qua
-                continue
-
+        # Duyệt từng dòng
+        for i, bk_value in enumerate(input_df['BK #'], start=2):  # Dòng bắt đầu từ 2 (sau header)
             bk_value = str(bk_value).strip()
+            if not bk_value:
+                continue  # bỏ qua BK# rỗng
 
             # Truy vấn trong master data
-            cursor.execute(f"SELECT * FROM {TABLE_NAME} WHERE `Carrier Bkg no.` = ?", (bk_value,))
-            rows = cursor.fetchall()
+            query = f"SELECT * FROM {TABLE_NAME} WHERE `Carrier Bkg no.` = ?"
+            rows = cursor.execute(query, (bk_value,)).fetchall()
 
             if len(rows) == 0:
                 print(f"⚠️ BK # : {bk_value} không tìm thấy trong master data.")
                 continue
             elif len(rows) > 1:
-                print(f"⚠️ BK # : {bk_value} đang bị trùng lặp trong master data, phát hiện {len(rows)} dòng. Sử dụng dòng đầu tiên.")
+                print(f"⚠️ BK # : {bk_value} đang bị trùng lặp ở master data, phát hiện có {len(rows)} rows bị trùng. Đang sử dụng row đầu tiên để fill data.")
 
-            row = rows[0]
-            col_names = [desc[0] for desc in cursor.description]
-            data = dict(zip(col_names, row))
+            # Lấy dòng đầu tiên
+            columns = [desc[0] for desc in cursor.description]
+            data = dict(zip(columns, rows[0]))
 
-            # Tính toán ETD
-            etd_value = ""
-            origin_etd = data.get("Origin ETD", "").strip()
-            new_etd = data.get("New ETD", "").strip()
+            # Xử lý ETD
+            origin_etd = str(data.get("Origin ETD", "")).strip()
+            new_etd = str(data.get("New ETD", "")).strip()
 
             if origin_etd and not new_etd:
-                etd_value = origin_etd
+                etd_value = normalize_date(origin_etd)
             elif origin_etd and new_etd:
-                etd_value = new_etd
+                etd_value = normalize_date(new_etd)
+            else:
+                etd_value = ""
 
-            # Cập nhật từng ô tương ứng
-            if line_col: ws.cell(row=row_idx, column=line_col).value = data.get("Carrier", "")
-            if job_col: ws.cell(row=row_idx, column=job_col).value = data.get("Job no.", "")
-            if vessel_col: ws.cell(row=row_idx, column=vessel_col).value = data.get("Vessel name", "")
-            if branch_col: ws.cell(row=row_idx, column=branch_col).value = data.get("Shipper Name", "")
-            if etd_col: ws.cell(row=row_idx, column=etd_col).value = etd_value
+            # Fill các cột tương ứng
+            for col_name, db_field in col_map.items():
+                if col_name not in col_index:
+                    continue  # bỏ qua nếu cột không tồn tại trong input
+                col_num = col_index[col_name]
+                cell = ws.cell(row=i, column=col_num)
+                if col_name == "ETD":
+                    cell.value = etd_value
+                else:
+                    cell.value = data.get(db_field, "")
 
-        # Lưu lại file gốc
+        # Lưu lại file gốc (giữ nguyên format)
         wb.save(file_path)
+        wb.close()
         conn.close()
-        print(f"✅ Hoàn tất fill data và ghi đè vào file gốc: {file_path}")
+
+        print("\n✅ Fill data hoàn tất.")
 
     except KeyboardInterrupt:
-        print("\n🛑 Quá trình bị hủy bởi người dùng (Ctrl + C). Quay lại menu chính...")
+        print("\n🛑 Đã dừng chương trình theo yêu cầu.")
     except Exception as e:
         print(f"❌ Lỗi trong quá trình fill data: {e}")
-
 
 
 def main():
@@ -198,12 +237,12 @@ def main():
             elif choice == "2":
                 fill_data()
             elif choice == "0":
-                print("👋 Thoát chương trình. Tạm biệt!")
+                print("👋 Tạm biệt!")
                 break
             else:
                 print("❌ Lựa chọn không hợp lệ, vui lòng nhập lại.")
     except KeyboardInterrupt:
-        print("\n👋 Thoát chương trình bằng Ctrl + C. Tạm biệt!")
+        print("\n👋 Tạm biệt!")
 
 
 if __name__ == "__main__":
