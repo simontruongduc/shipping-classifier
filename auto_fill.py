@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import sqlite3
 import pandas as pd
@@ -12,7 +13,7 @@ TABLE_NAME = "master_data"
 
 
 def show_menu():
-    print("\n=== MENU CHÍNH ===")
+    print("\n=== AUTO FILL PROCESS MENU ===")
     print("1. Khởi tạo master data")
     print("2. Fill data")
     print("0. Thoát")
